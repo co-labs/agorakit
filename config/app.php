@@ -40,6 +40,8 @@ return [
 
     'debug' => env('APP_DEBUG', false),
 
+    'realtime' => env('APP_REALTIME', false),
+
     /*
     |--------------------------------------------------------------------------
     | Application URL

@@ -13,6 +13,16 @@
 
   <link rel="stylesheet" href="{{ mix('/css/app.css') }}">
 
+  <script>
+    window.__app = {
+      "realtime": {{ config("app.realtime") ? "true" : "false" }},
+      @if(config("app.realtime"))
+      "pusherKey": "{{ config("broadcasting.connections.pusher.key") }}",
+      "pusherHost": "{{ config("broadcasting.connections.pusher.options.host") }}",
+      "pusherPort": "{{ config("broadcasting.connections.pusher.options.port") }}",
+      @endif
+    }
+  </script>
 
   <!-- additional css -->
 

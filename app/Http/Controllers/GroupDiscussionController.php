@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Discussion;
+use App\Events\MessageSent;
+use App\Events\UserJoinDiscussion;
 use App\Group;
 use Auth;
 use Carbon\Carbon;
@@ -19,9 +21,90 @@ class GroupDiscussionController extends Controller
     }
 
     /**
+     * Show the form for creating a new resource.
+     *
+     * @return Response
+     */
+    public function create(Request $request, Group $group)
+    {
+        // we don't authorize at this stage since we might not have a group
+        $tags = $group->tagsUsed();
+
+        return view('discussions.create')
+            ->with('group', $group)
+            ->with('all_tags', $tags)
+            ->with('tab', 'discussion');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param int $id
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy(Request $request, Group $group, Discussion $discussion)
+    {
+        $this->authorize('view', $discussion);
+        $discussion->delete();
+        flash(trans('messages.ressource_deleted_successfully'));
+
+        return redirect()->route('groups.discussions.index', [$group]);
+    }
+
+    public function destroyConfirm(Request $request, Group $group, Discussion $discussion)
+    {
+        $this->authorize('delete', $discussion);
+
+        if (Gate::allows('delete', $discussion)) {
+            return view('discussions.delete')
+                ->with('group', $group)
+                ->with('discussion', $discussion)
+                ->with('tab', 'discussion');
+        } else {
+            abort(403);
+        }
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param int $id
+     *
+     * @return Response
+     */
+    public function edit(Request $request, Group $group, Discussion $discussion)
+    {
+        $this->authorize('update', $discussion);
+
+        $tags = $group->tagsUsed();
+
+        return view('discussions.edit')
+            ->with('discussion', $discussion)
+            ->with('group', $group)
+            ->with('all_tags', $tags)
+            ->with('model_tags', $discussion->tags)
+            ->with('tab', 'discussion');
+    }
+
+    /**
+     * Show the revision history of the discussion.
+     */
+    public function history(Group $group, Discussion $discussion)
+    {
+        $this->authorize('history', $discussion);
+
+        return view('discussions.history')
+            ->with('group', $group)
+            ->with('discussion', $discussion)
+            ->with('tab', 'discussion');
+    }
+
+    /**
      * Display a listing of the resource.
      *
      * @return Response
+     * @throws \Illuminate\Auth\Access\AuthorizationException
      */
     public function index(Request $request, Group $group)
     {
@@ -33,52 +116,75 @@ class GroupDiscussionController extends Controller
 
         if (\Auth::check()) {
             $discussions =
-      $group->discussions()
-      ->has('user')
-      ->with('userReadDiscussion', 'user')
-      ->withCount('comments')
-      ->orderBy('updated_at', 'desc')
-      ->when($tag, function ($query) use ($tag) {
-          return $query->withAnyTags($tag);
-      })
-      ->paginate(50);
+                $group->discussions()
+                    ->has('user')
+                    ->with('userReadDiscussion', 'user')
+                    ->withCount('comments')
+                    ->orderBy('updated_at', 'desc')
+                    ->when($tag, function ($query) use ($tag) {
+                        return $query->withAnyTags($tag);
+                    })
+                    ->paginate(50);
         } else { // don't load the unread relation, since we don't know who to look for.
             $discussions = $group->discussions()->has('user')->with('user')->withCount('comments')->orderBy('updated_at', 'desc')->paginate(50);
         }
 
         return view('discussions.index')
-    ->with('title', $group->name.' - '.trans('messages.discussions'))
-    ->with('discussions', $discussions)
-    ->with('tags', $tags)
-    ->with('group', $group)
-    ->with('tab', 'discussion');
+            ->with('title', $group->name . ' - ' . trans('messages.discussions'))
+            ->with('discussions', $discussions)
+            ->with('tags', $tags)
+            ->with('group', $group)
+            ->with('tab', 'discussion');
     }
 
     /**
-     * Show the form for creating a new resource.
+     * Display the specified resource.
+     *
+     * @param int $id
      *
      * @return Response
+     * @throws \Illuminate\Auth\Access\AuthorizationException
      */
-    public function create(Request $request, Group $group)
+    public function show(Group $group, Discussion $discussion)
     {
-        // we don't authorize at this stage since we might not have a group
-        $tags = $group->tagsUsed();
+        $this->authorize('view', $discussion);
 
-        return view('discussions.create')
-    ->with('group', $group)
-    ->with('all_tags', $tags)
-    ->with('tab', 'discussion');
+        broadcast(new MessageSent(auth()->user(), "TEST"))->toOthers();
+
+        // if user is logged in, we update the read count for this discussion.
+        // just before that, we save the number of already read comments in $read_comments to be used in the view to scroll to the first unread comments
+        if (Auth::check()) {
+
+            event(new UserJoinDiscussion(auth()->user()));
+
+            $UserReadDiscussion = \App\UserReadDiscussion::firstOrNew(['discussion_id' => $discussion->id, 'user_id' => Auth::user()->id]);
+
+            $read_comments = $UserReadDiscussion->read_comments;
+            $UserReadDiscussion->read_comments = $discussion->total_comments;
+            $UserReadDiscussion->read_at = Carbon::now();
+            $UserReadDiscussion->save();
+        } else {
+            $read_comments = 0;
+        }
+
+        return view('discussions.show')
+            ->with('title', $group->name . ' - ' . $discussion->name)
+            ->with('discussion', $discussion)
+            ->with('read_comments', $read_comments)
+            ->with('group', $group)
+            ->with('tab', 'discussion');
     }
 
     /**
      * Store a newly created resource in storage.
      *
      * @return Response
+     * @throws \Illuminate\Auth\Access\AuthorizationException
      */
     public function store(Request $request, Group $group)
     {
 
-    // if no group is in the route, it means user chose the group using the dropdown
+        // if no group is in the route, it means user chose the group using the dropdown
         if (!$group->exists) {
             $group = \App\Group::find($request->get('group'));
             //if group is null, redirect to the discussion create page with error messages, saying
@@ -99,8 +205,8 @@ class GroupDiscussionController extends Controller
         if (!$group->discussions()->save($discussion)) {
             // Oops.
             return redirect()->route('groups.discussions.create', $group)
-      ->withErrors($discussion->getErrors())
-      ->withInput();
+                ->withErrors($discussion->getErrors())
+                ->withInput();
         }
 
         // update activity timestamp on parent items
@@ -117,64 +223,12 @@ class GroupDiscussionController extends Controller
     }
 
     /**
-     * Display the specified resource.
-     *
-     * @param int $id
-     *
-     * @return Response
-     */
-    public function show(Group $group, Discussion $discussion)
-    {
-        $this->authorize('view', $discussion);
-
-        // if user is logged in, we update the read count for this discussion.
-        // just before that, we save the number of already read comments in $read_comments to be used in the view to scroll to the first unread comments
-        if (Auth::check()) {
-            $UserReadDiscussion = \App\UserReadDiscussion::firstOrNew(['discussion_id' => $discussion->id, 'user_id' => Auth::user()->id]);
-
-            $read_comments = $UserReadDiscussion->read_comments;
-            $UserReadDiscussion->read_comments = $discussion->total_comments;
-            $UserReadDiscussion->read_at = Carbon::now();
-            $UserReadDiscussion->save();
-        } else {
-            $read_comments = 0;
-        }
-
-        return view('discussions.show')
-    ->with('title', $group->name.' - '.$discussion->name)
-    ->with('discussion', $discussion)
-    ->with('read_comments', $read_comments)
-    ->with('group', $group)
-    ->with('tab', 'discussion');
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     *
-     * @param int $id
-     *
-     * @return Response
-     */
-    public function edit(Request $request, Group $group, Discussion $discussion)
-    {
-        $this->authorize('update', $discussion);
-
-        $tags = $group->tagsUsed();
-
-        return view('discussions.edit')
-    ->with('discussion', $discussion)
-    ->with('group', $group)
-    ->with('all_tags', $tags)
-    ->with('model_tags', $discussion->tags)
-    ->with('tab', 'discussion');
-    }
-
-    /**
      * Update the specified resource in storage.
      *
      * @param int $id
      *
      * @return Response
+     * @throws \Illuminate\Auth\Access\AuthorizationException
      */
     public function update(Request $request, Group $group, Discussion $discussion)
     {
@@ -187,56 +241,12 @@ class GroupDiscussionController extends Controller
 
         if ($request->get('tags')) {
             $discussion->retag($request->get('tags'));
-        }
-        else {
+        } else {
             $discussion->detag();
         }
 
         flash(trans('messages.ressource_updated_successfully'));
 
         return redirect()->route('groups.discussions.show', [$discussion->group, $discussion]);
-    }
-
-    public function destroyConfirm(Request $request, Group $group, Discussion $discussion)
-    {
-        $this->authorize('delete', $discussion);
-
-        if (Gate::allows('delete', $discussion)) {
-            return view('discussions.delete')
-      ->with('group', $group)
-      ->with('discussion', $discussion)
-      ->with('tab', 'discussion');
-        } else {
-            abort(403);
-        }
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param int $id
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy(Request $request, Group $group, Discussion $discussion)
-    {
-        $this->authorize('view', $discussion);
-        $discussion->delete();
-        flash(trans('messages.ressource_deleted_successfully'));
-
-        return redirect()->route('groups.discussions.index', [$group]);
-    }
-
-    /**
-     * Show the revision history of the discussion.
-     */
-    public function history(Group $group, Discussion $discussion)
-    {
-        $this->authorize('history', $discussion);
-
-        return view('discussions.history')
-    ->with('group', $group)
-    ->with('discussion', $discussion)
-    ->with('tab', 'discussion');
     }
 }

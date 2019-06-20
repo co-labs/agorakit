@@ -9,6 +9,7 @@
   "require": {
     "php": ">=7.1.3",
     "barryvdh/laravel-translation-manager": "^0.5.3",
+    "beyondcode/laravel-websockets": "^1.1",
     "consoletvs/charts": "5.*",
     "cviebrock/eloquent-sluggable": "4.6",
     "cviebrock/eloquent-taggable": "~3.4",
@@ -21,12 +22,12 @@
     "laravel/framework": "5.7.*",
     "laravelcollective/html": "5.7.*",
     "nicolaslopezj/searchable": "^1.10",
+    "pusher/pusher-php-server": "~3.0",
     "rap2hpoutre/laravel-log-viewer": "0.*",
     "suin/php-rss-writer": "^1.6",
     "tio/laravel": "^1.6",
     "toin0u/geocoder-laravel": "^4.0",
     "venturecraft/revisionable": "1.*",
-    "watson/autologin": "^0.5",
     "watson/validating": "^3",
     "willdurand/email-reply-parser": "^2.8"
   },
